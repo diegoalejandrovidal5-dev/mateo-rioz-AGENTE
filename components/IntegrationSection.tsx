@@ -91,7 +91,7 @@ export default function IntegrationSection() {
             </div>
 
             {/* Mateo */}
-            <div className="bg-[#101b37] rounded-2xl p-6 text-center min-w-[180px]">
+            <div className="w-full max-w-[220px] lg:w-auto bg-[#101b37] rounded-2xl p-6 text-center lg:min-w-[180px]">
               <div className="w-12 h-12 bg-emerald-500 rounded-xl flex items-center justify-center mx-auto mb-3">
                 <span className="text-white font-bold text-lg">M</span>
               </div>

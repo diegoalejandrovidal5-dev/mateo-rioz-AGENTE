@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:stable": "tools\\dev\\start-clean-dev.cmd",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

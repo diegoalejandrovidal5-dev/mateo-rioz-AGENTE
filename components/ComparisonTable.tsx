@@ -55,12 +55,12 @@ export default function ComparisonTable() {
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm"
+          className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm [-webkit-overflow-scrolling:touch]"
         >
-          <table className="w-full min-w-[700px] bg-white">
+          <table className="w-full min-w-[620px] bg-white">
             <thead>
               <tr className="border-b border-slate-200">
-                <th className="px-4 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide w-[220px]">
+                <th className="px-3 sm:px-4 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide w-[180px] sm:w-[220px]">
                   Variable
                 </th>
                 {[
@@ -72,7 +72,7 @@ export default function ComparisonTable() {
                 ].map((col) => (
                   <th
                     key={col}
-                    className={`px-4 py-4 text-center text-xs font-semibold uppercase tracking-wide ${
+                    className={`px-2 sm:px-4 py-4 text-center text-[11px] sm:text-xs font-semibold uppercase tracking-wide ${
                       col === "Mateo Ríos"
                         ? "text-emerald-700 bg-emerald-50"
                         : "text-slate-500"

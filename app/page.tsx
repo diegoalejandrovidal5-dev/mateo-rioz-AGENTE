@@ -30,11 +30,10 @@ export default function Home() {
       <div className="relative z-[2]">
         <TrustBar />
         <DemoVideoSection />
+        <HowItWorks />
         <BenefitsGrid />
         <IndustryUseCases />
         <InteractiveDemo />
-        <div className="fade-transition" />
-        <HowItWorks />
         <IntegrationSection />
         <SocialProof />
         <ComparisonTable />

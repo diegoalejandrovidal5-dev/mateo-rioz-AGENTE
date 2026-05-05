@@ -1,12 +1,31 @@
 "use client";
 
-import { useRef, useEffect } from "react";
-import { useScroll, useTransform, motion, useMotionValueEvent } from "framer-motion";
+import { useRef, useEffect, useState, useCallback, type MutableRefObject } from "react";
+import {
+  useScroll,
+  useTransform,
+  motion,
+  useReducedMotion,
+  useMotionValueEvent,
+  type MotionValue,
+} from "framer-motion";
 import { cn } from "@/lib/utils";
 
 const SCROLLY_VIDEO = "/mateo-closeup.mp4";
 const SCROLLY_POSTER = "/mateo-full.png";
-const SCROLL_VH = 480;
+
+/**
+ * Misma altura que el sticky (100vh): evita la “cola” extra bajo el pin que se veía como franja azul (#080f1e).
+ */
+const SCROLL_VH = 100;
+
+/** Ventanas de progreso 0→1 por tarjeta (solo movimiento/escala; las 4 siguen siempre legibles). */
+const DESKTOP_CARD_ENTER: [number, number][] = [
+  [0.04, 0.22],
+  [0.12, 0.32],
+  [0.22, 0.44],
+  [0.34, 0.58],
+];
 
 const MAIN_COPY = {
   title: "¿Qué es un empleado digital?",
@@ -48,7 +67,13 @@ function GlassCard({
   return <div className={`liquid-glass liquid-glass-scrolly text-left ${className}`}>{children}</div>;
 }
 
-function EditorialPanel({ compact }: { compact?: boolean }) {
+function EditorialPanel({
+  compact,
+  activeCard,
+}: {
+  compact?: boolean;
+  activeCard?: (typeof SIDE_CARDS)[number] | null;
+}) {
   return (
     <GlassCard
       className={cn(
@@ -61,6 +86,19 @@ function EditorialPanel({ compact }: { compact?: boolean }) {
           <span className="chip-line" />
           <span>Concepto</span>
         </p>
+
+        {activeCard && (
+          <p
+            className={cn(
+              "concept-focus-live",
+              compact && "concept-focus-live--compact",
+            )}
+            aria-live="polite"
+          >
+            <span className="concept-focus-live-kicker">Enfoque</span>
+            <span className="concept-focus-live-text">{activeCard.chip}</span>
+          </p>
+        )}
 
         <h2 className={cn("concept-title", compact ? "text-[18px] sm:text-[20px]" : "")}>
           ¿Qué es un empleado <em>digital?</em>
@@ -82,28 +120,260 @@ function EditorialPanel({ compact }: { compact?: boolean }) {
   );
 }
 
-function MobileRightGlassCards() {
+function pickEditorialIndexFromProgress(p: number) {
+  const mids = DESKTOP_CARD_ENTER.map(([s, e]) => (s + e) / 2);
+  let idx = 0;
+  for (let i = mids.length - 1; i >= 0; i--) {
+    if (p >= mids[i]!) {
+      idx = i;
+      break;
+    }
+  }
+  return idx;
+}
+
+function MobileRightGlassCards({
+  activeIndex,
+  onActivate,
+  reduced,
+  scrollRootRef,
+}: {
+  activeIndex: number;
+  onActivate: (index: number) => void;
+  reduced: boolean;
+  scrollRootRef: MutableRefObject<HTMLDivElement | null>;
+}) {
+  useEffect(() => {
+    const root = scrollRootRef.current;
+    if (!root || reduced) return;
+
+    const cards = root.querySelectorAll<HTMLElement>("[data-editorial-card]");
+    if (!cards.length) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        let bestIdx = 0;
+        let bestRatio = 0;
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const idx = Number((entry.target as HTMLElement).dataset.editorialCard);
+          if (!Number.isFinite(idx)) continue;
+          const r =
+            typeof entry.intersectionRatio === "number" ? entry.intersectionRatio : 0;
+          if (r >= bestRatio) {
+            bestRatio = r;
+            bestIdx = idx;
+          }
+        }
+        if (bestRatio >= 0.42) {
+          onActivate(bestIdx);
+        }
+      },
+      {
+        root,
+        threshold: [0, 0.15, 0.25, 0.35, 0.42, 0.55, 0.7, 0.85],
+        rootMargin: "-6px 0px",
+      },
+    );
+
+    cards.forEach((node) => observer.observe(node));
+
+    return () => observer.disconnect();
+  }, [onActivate, reduced, scrollRootRef]);
+
+  const tapInteractive = reduced
+    ? {}
+    : {
+        whileTap: { scale: 0.985 },
+        transition: { type: "spring" as const, stiffness: 520, damping: 38 },
+      };
+
   return (
-    <div className="max-h-[min(82svh,720px)] overflow-y-auto overflow-x-visible [scrollbar-width:thin] [touch-action:pan-y]">
-      <GlassCard className="editorial-stack p-0 overflow-hidden">
+    <div
+      ref={scrollRootRef}
+      className="h-full w-full min-h-0 overflow-y-auto overflow-x-hidden pr-1 [scrollbar-width:thin] [touch-action:pan-y]"
+    >
+      <GlassCard className="editorial-stack p-0">
         {SIDE_CARDS.map((card, idx) => (
-          <article key={card.title} className="editorial-card">
-            <div className="editorial-card-inner">
-              <div className="editorial-card-body">
-                <p className="editorial-chip">
-                  <span className="chip-line" />
-                  {card.chip}
-                </p>
-                <h3 className="editorial-title text-[11px] sm:text-xs">{card.title}</h3>
-                <p className="editorial-copy text-[10px] sm:text-[11px]">{card.body}</p>
+          reduced ? (
+            <article
+              key={card.title}
+              data-editorial-card={String(idx)}
+              className={cn(
+                "editorial-card editorial-card-interactive cursor-pointer touch-manipulation outline-none ring-offset-4 ring-offset-transparent",
+                "focus-visible:ring-2 focus-visible:ring-cyan-300/80",
+                idx === activeIndex && "is-selected",
+              )}
+              role="button"
+              tabIndex={0}
+              aria-pressed={idx === activeIndex}
+              aria-label={`${card.title}. Pulse para destacar`}
+              onClick={() => onActivate(idx)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onActivate(idx);
+                }
+              }}
+            >
+              <div className="editorial-card-inner">
+                <div className="editorial-card-body">
+                  <p className="editorial-chip">
+                    <span className="chip-line" />
+                    {card.chip}
+                  </p>
+                  <h3 className="editorial-title text-[11px] sm:text-xs">{card.title}</h3>
+                  <p className="editorial-copy text-[10px] sm:text-[11px]">{card.body}</p>
+                </div>
+                <span className="editorial-num hidden">{String(idx + 1).padStart(2, "0")}</span>
               </div>
-              <span className="editorial-num">{String(idx + 1).padStart(2, "0")}</span>
-            </div>
-            <span className="editorial-arrow">→</span>
-          </article>
+              <span className="editorial-arrow editorial-arrow-visible-sm">→</span>
+            </article>
+          ) : (
+            <motion.article
+              key={card.title}
+              data-editorial-card={String(idx)}
+              className={cn(
+                "editorial-card editorial-card-interactive relative z-0 outline-none ring-offset-4 ring-offset-transparent transform-gpu will-change-transform",
+                "focus-visible:ring-2 focus-visible:ring-cyan-300/80",
+                idx === activeIndex && "is-selected",
+              )}
+              role="button"
+              tabIndex={0}
+              aria-pressed={idx === activeIndex}
+              aria-label={`${card.title}. Pulse para destacar`}
+              {...tapInteractive}
+              onClick={() => onActivate(idx)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onActivate(idx);
+                }
+              }}
+            >
+              <div className="editorial-card-inner touch-manipulation">
+                <div className="editorial-card-body">
+                  <p className="editorial-chip">
+                    <span className="chip-line" />
+                    {card.chip}
+                  </p>
+                  <h3 className="editorial-title text-[11px] sm:text-xs">{card.title}</h3>
+                  <p className="editorial-copy text-[10px] sm:text-[11px]">{card.body}</p>
+                </div>
+                <span className="editorial-num hidden">{String(idx + 1).padStart(2, "0")}</span>
+              </div>
+              <span className="editorial-arrow editorial-arrow-visible-sm">→</span>
+            </motion.article>
+          )
         ))}
       </GlassCard>
     </div>
+  );
+}
+
+function DesktopEditorialCard({
+  card,
+  index,
+  scrollYProgress,
+  reduced,
+  isActive,
+  onActivate,
+}: {
+  card: (typeof SIDE_CARDS)[number];
+  index: number;
+  scrollYProgress: MotionValue<number>;
+  reduced: boolean;
+  isActive: boolean;
+  onActivate: () => void;
+}) {
+  const [start, end] = DESKTOP_CARD_ENTER[index] ?? [0, 1];
+  const clamp = { clamp: true } as const;
+
+  const y = useTransform(scrollYProgress, [start, end], [28, 0], clamp);
+  const scale = useTransform(scrollYProgress, [start, end], [0.97, 1], clamp);
+
+  /** Parallax muy sutil al entrar: alterna el desplazamiento por índice. */
+  const drift = useTransform(scrollYProgress, (p) => {
+    const span = end - start + 0.08;
+    const t = Math.min(1, Math.max(0, (p - start) / span));
+    return (index - 1.5) * 2 * (1 - t);
+  });
+
+  const yCombined = useTransform([y, drift], ([yy, d]) => Number(yy) + Number(d));
+
+  if (reduced) {
+    return (
+      <article
+        data-editorial-card={String(index)}
+        className={cn(
+          "editorial-card editorial-card-interactive cursor-pointer touch-manipulation outline-none ring-offset-4 ring-offset-transparent",
+          "focus-visible:ring-2 focus-visible:ring-cyan-300/80",
+          isActive && "is-selected",
+        )}
+        role="button"
+        tabIndex={0}
+        aria-pressed={isActive}
+        onClick={onActivate}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onActivate();
+          }
+        }}
+      >
+        <div className="editorial-card-inner">
+          <div className="editorial-card-body">
+            <p className="editorial-chip">
+              <span className="chip-line" />
+              {card.chip}
+            </p>
+            <h3 className="editorial-title text-sm">{card.title}</h3>
+            <p className="editorial-copy text-xs sm:text-[13px]">{card.body}</p>
+          </div>
+          <span className="editorial-num">{String(index + 1).padStart(2, "0")}</span>
+        </div>
+        <span className="editorial-arrow editorial-arrow-visible-sm">→</span>
+      </article>
+    );
+  }
+
+  return (
+    <motion.article
+      data-editorial-card={String(index)}
+      className={cn(
+        "editorial-card editorial-card-interactive relative z-0 cursor-pointer touch-manipulation transform-gpu outline-none ring-offset-4 ring-offset-transparent will-change-transform",
+        "focus-visible:ring-2 focus-visible:ring-cyan-300/80",
+        isActive && "is-selected",
+      )}
+      role="button"
+      tabIndex={0}
+      aria-pressed={isActive}
+      aria-label={`${card.title}. Pulse para destacar`}
+      initial={false}
+      style={{ scale, y: yCombined }}
+      whileTap={{ scale: 0.985 }}
+      transition={{ duration: 0.2 }}
+      onClick={onActivate}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onActivate();
+        }
+      }}
+    >
+      <div className="editorial-card-inner">
+        <div className="editorial-card-body">
+          <p className="editorial-chip">
+            <span className="chip-line" />
+            {card.chip}
+          </p>
+          <h3 className="editorial-title text-sm">{card.title}</h3>
+          <p className="editorial-copy text-xs sm:text-[13px]">{card.body}</p>
+        </div>
+        <span className="editorial-num">{String(index + 1).padStart(2, "0")}</span>
+      </div>
+      <span className="editorial-arrow editorial-arrow-visible-sm">→</span>
+    </motion.article>
   );
 }
 
@@ -112,7 +382,20 @@ export default function ScrollytellingSection() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const mobileVideoRef = useRef<HTMLVideoElement>(null);
   const mobileSceneRef = useRef<HTMLDivElement>(null);
-  const wasDesktopInScene = useRef(false);
+  const mobileCardsScrollRef = useRef<HTMLDivElement | null>(null);
+  const prefersReducedMotion = useReducedMotion();
+
+  const [editorialFocus, setEditorialFocus] = useState(0);
+  const [viewportLg, setViewportLg] = useState(false);
+
+  const activateEditorial = useCallback((index: number) => {
+    if (!Number.isFinite(index)) return;
+    const n = SIDE_CARDS.length;
+    const clamped = Math.max(0, Math.min(n - 1, Math.floor(index)));
+    setEditorialFocus(clamped);
+  }, []);
+
+  const pinnedCard = SIDE_CARDS[editorialFocus] ?? SIDE_CARDS[0];
 
   const { scrollYProgress } = useScroll({
     target: scrollRef,
@@ -120,32 +403,48 @@ export default function ScrollytellingSection() {
   });
 
   const leftReveal = useTransform(scrollYProgress, [0, 0.12], [0, 1]);
-  const c1 = useTransform(scrollYProgress, [0.1, 0.26], [0, 1]);
-  const c2 = useTransform(scrollYProgress, [0.24, 0.42], [0, 1]);
-  const c3 = useTransform(scrollYProgress, [0.4, 0.58], [0, 1]);
-  const c4 = useTransform(scrollYProgress, [0.56, 0.74], [0, 1]);
 
-  const y1 = useTransform(c1, [0, 1], [22, 0]);
-  const y2 = useTransform(c2, [0, 1], [22, 0]);
-  const y3 = useTransform(c3, [0, 1], [22, 0]);
-  const y4 = useTransform(c4, [0, 1], [22, 0]);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const update = () => setViewportLg(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
 
-  useMotionValueEvent(scrollYProgress, "change", (v) => {
-    const inScene = v > 0.03 && v < 0.97;
-    const vid = videoRef.current;
-    if (!vid) return;
-
-    if (inScene && !wasDesktopInScene.current) {
-      wasDesktopInScene.current = true;
-      vid.currentTime = 0;
-      vid.play().catch(() => {});
-      window.dispatchEvent(new CustomEvent("scrolly-video-on"));
-    } else if (!inScene && wasDesktopInScene.current) {
-      wasDesktopInScene.current = false;
-      vid.pause();
-      window.dispatchEvent(new CustomEvent("scrolly-video-off"));
-    }
+  useMotionValueEvent(scrollYProgress, "change", (latest) => {
+    if (!viewportLg || prefersReducedMotion) return;
+    setEditorialFocus(pickEditorialIndexFromProgress(latest));
   });
+
+  useEffect(() => {
+    const scene = scrollRef.current;
+    const vid = videoRef.current;
+    if (!scene || !vid) return;
+
+    let inDesktopScene = false;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const enough = entry.isIntersecting && entry.intersectionRatio >= 0.14;
+          if (enough && !inDesktopScene) {
+            inDesktopScene = true;
+            vid.currentTime = 0;
+            vid.play().catch(() => {});
+            window.dispatchEvent(new CustomEvent("scrolly-video-on"));
+          } else if (!enough && inDesktopScene) {
+            inDesktopScene = false;
+            vid.pause();
+            window.dispatchEvent(new CustomEvent("scrolly-video-off"));
+          }
+        }
+      },
+      { threshold: [0, 0.08, 0.14, 0.25, 0.4] },
+    );
+
+    observer.observe(scene);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const scene = mobileSceneRef.current;
@@ -201,37 +500,42 @@ export default function ScrollytellingSection() {
           aria-hidden
         />
         <div
-          className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#080f1e]/55 via-transparent to-[#080f1e]/35"
+          className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#080f1e]/40 via-transparent to-[#080f1e]/22"
           aria-hidden
         />
 
         <div className="relative z-10 min-h-[100svh] w-full max-w-[100vw] mx-auto">
           <div
-            className="absolute z-20 flex flex-col justify-center pointer-events-auto pl-2 sm:pl-3"
+            className="absolute z-20 flex min-h-0 flex-col overflow-y-auto pointer-events-auto pl-2 sm:pl-3"
             style={{
               left: 0,
               top: "max(5.5rem, env(safe-area-inset-top))",
               bottom: "max(0.75rem, env(safe-area-inset-bottom))",
-              width: "min(34%, var(--subject-safe-left))",
-              maxWidth: "15.5rem",
+              width: "min(42%, var(--subject-safe-left))",
+              maxWidth: "16.5rem",
             }}
           >
-            <div className="max-h-[min(82svh,720px)] w-full overflow-y-auto overflow-x-hidden pr-1 [scrollbar-width:thin] [touch-action:pan-y]">
-              <EditorialPanel compact />
+            <div className="max-h-full w-full overflow-y-auto overflow-x-hidden pr-1 [scrollbar-width:thin] [touch-action:pan-y]">
+              <EditorialPanel compact activeCard={pinnedCard} />
             </div>
           </div>
 
           <div
-            className="absolute z-20 flex flex-col justify-center pointer-events-auto pr-2 sm:pr-3"
+            className="absolute z-20 flex min-h-0 flex-col min-w-0 overflow-hidden pointer-events-auto pr-2 sm:pr-3"
             style={{
               right: 0,
               top: "max(5.5rem, env(safe-area-inset-top))",
               bottom: "max(0.75rem, env(safe-area-inset-bottom))",
-              width: "min(34%, var(--subject-safe-left))",
-              maxWidth: "14rem",
+              width: "min(42%, var(--subject-safe-left))",
+              maxWidth: "16rem",
             }}
           >
-            <MobileRightGlassCards />
+            <MobileRightGlassCards
+              activeIndex={editorialFocus}
+              onActivate={activateEditorial}
+              reduced={!!prefersReducedMotion}
+              scrollRootRef={mobileCardsScrollRef}
+            />
           </div>
         </div>
       </div>
@@ -257,7 +561,7 @@ export default function ScrollytellingSection() {
             aria-hidden
           />
           <div
-            className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#080f1e]/65 via-transparent to-[#080f1e]/25"
+            className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#080f1e]/40 via-transparent to-[#080f1e]/20"
             aria-hidden
           />
 
@@ -275,64 +579,31 @@ export default function ScrollytellingSection() {
                 style={{ opacity: leftReveal }}
                 className="min-h-0 max-h-full overflow-y-auto pr-1 [scrollbar-width:thin]"
               >
-                <EditorialPanel />
+                <EditorialPanel activeCard={pinnedCard} />
               </motion.div>
             </div>
 
             <div
-              className="absolute z-20 flex flex-col justify-center gap-3 pointer-events-auto max-w-[32vw]"
+              className="absolute z-20 flex flex-col gap-3 pointer-events-auto max-w-[32vw] min-h-0 overflow-y-auto pr-2 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.22)_transparent] [touch-action:pan-y]"
               style={{
                 right: "max(1.25rem, env(safe-area-inset-right))",
-                top: "max(14%, env(safe-area-inset-top))",
-                bottom: "max(12%, env(safe-area-inset-bottom))",
+                top: "max(5%, env(safe-area-inset-top))",
+                bottom: "max(11%, env(safe-area-inset-bottom))",
                 width: "var(--glass-right-width)",
               }}
             >
-              <GlassCard className="editorial-stack p-0 overflow-hidden">
-                <motion.article style={{ opacity: c1, y: y1 }} className="editorial-card">
-                  <div className="editorial-card-inner">
-                    <div className="editorial-card-body">
-                      <p className="editorial-chip"><span className="chip-line" />{SIDE_CARDS[0].chip}</p>
-                      <h3 className="editorial-title text-sm">{SIDE_CARDS[0].title}</h3>
-                      <p className="editorial-copy text-xs sm:text-[13px]">{SIDE_CARDS[0].body}</p>
-                    </div>
-                    <span className="editorial-num">01</span>
-                  </div>
-                  <span className="editorial-arrow">→</span>
-                </motion.article>
-                <motion.article style={{ opacity: c2, y: y2 }} className="editorial-card">
-                  <div className="editorial-card-inner">
-                    <div className="editorial-card-body">
-                      <p className="editorial-chip"><span className="chip-line" />{SIDE_CARDS[1].chip}</p>
-                      <h3 className="editorial-title text-sm">{SIDE_CARDS[1].title}</h3>
-                      <p className="editorial-copy text-xs sm:text-[13px]">{SIDE_CARDS[1].body}</p>
-                    </div>
-                    <span className="editorial-num">02</span>
-                  </div>
-                  <span className="editorial-arrow">→</span>
-                </motion.article>
-                <motion.article style={{ opacity: c3, y: y3 }} className="editorial-card">
-                  <div className="editorial-card-inner">
-                    <div className="editorial-card-body">
-                      <p className="editorial-chip"><span className="chip-line" />{SIDE_CARDS[2].chip}</p>
-                      <h3 className="editorial-title text-sm">{SIDE_CARDS[2].title}</h3>
-                      <p className="editorial-copy text-xs sm:text-[13px]">{SIDE_CARDS[2].body}</p>
-                    </div>
-                    <span className="editorial-num">03</span>
-                  </div>
-                  <span className="editorial-arrow">→</span>
-                </motion.article>
-                <motion.article style={{ opacity: c4, y: y4 }} className="editorial-card">
-                  <div className="editorial-card-inner">
-                    <div className="editorial-card-body">
-                      <p className="editorial-chip"><span className="chip-line" />{SIDE_CARDS[3].chip}</p>
-                      <h3 className="editorial-title text-sm">{SIDE_CARDS[3].title}</h3>
-                      <p className="editorial-copy text-xs sm:text-[13px]">{SIDE_CARDS[3].body}</p>
-                    </div>
-                    <span className="editorial-num">04</span>
-                  </div>
-                  <span className="editorial-arrow">→</span>
-                </motion.article>
+              <GlassCard className="editorial-stack p-0 flex h-full min-h-0 flex-1 flex-col [perspective:1200px] [transform-style:preserve-3d]">
+                {SIDE_CARDS.map((card, idx) => (
+                  <DesktopEditorialCard
+                    key={card.title}
+                    card={card}
+                    index={idx}
+                    scrollYProgress={scrollYProgress}
+                    reduced={!!prefersReducedMotion}
+                    isActive={editorialFocus === idx}
+                    onActivate={() => activateEditorial(idx)}
+                  />
+                ))}
               </GlassCard>
             </div>
           </div>
