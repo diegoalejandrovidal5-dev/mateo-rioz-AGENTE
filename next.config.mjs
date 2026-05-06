@@ -13,6 +13,15 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  /** Menos páginas/chunks desalojados en caliente durante `next dev` (menos “planos” intermitentes). */
+  ...(useExportDist
+    ? {}
+    : {
+        onDemandEntries: {
+          maxInactiveAge: 120_000,
+          pagesBufferLength: 10,
+        },
+      }),
 };
 
 export default nextConfig;

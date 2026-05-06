@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "cross-env WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true NEXT_WEBPACK_USEPOLLING=1 next dev",
+    "dev:3010": "cross-env WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true NEXT_WEBPACK_USEPOLLING=1 next dev -p 3010",
     "dev:stable": "tools\\dev\\start-clean-dev.cmd",
     "build": "next build",
     "start": "next start",
@@ -27,6 +28,7 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "cross-env": "^10.1.0",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
     "postcss": "^8",
